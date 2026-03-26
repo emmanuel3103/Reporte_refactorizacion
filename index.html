@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>DI EDI301 Reporte</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 40px;
+  line-height: 1.6;
+}
+
+h1, h2, h3 {
+  margin-top: 30px;
+}
+
+pre {
+  background: #f4f4f4;
+  padding: 10px;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 20px 0;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 10px;
+}
+
+th {
+  background: #eee;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Instituto Superior de Desarrollo de Apps</h1>
+<h2>Desarrollo de Aplicaciones Móviles</h2>
+<h2>Inyección de Dependencias</h2>
+<h3>Implementación en API Node.js — Proyecto EDI 301</h3>
+
+<p><strong>Aldahir Ballina | Marzo 2026</strong></p>
+
+<h2>1. Introducción</h2>
+<p>
+El proyecto EDI 301 es una aplicación de gestión de familias escolares compuesta por un frontend desarrollado en Flutter y un backend construido con Node.js, Express y MSSQL. A lo largo de su desarrollo, el código fue evolucionando hacia una arquitectura limpia con separación en capas: infraestructura, casos de uso, controladores y rutas.
+Sin embargo, a pesar de esta separación estructural, persistía un problema de acoplamiento fuerte entre las capas: cada módulo importaba directamente sus dependencias mediante require(), lo que dificultaba las pruebas unitarias, la sustitución de implementaciones y el mantenimiento a largo plazo.
+Este documento describe la implementación del principio de Inyección de Dependencias (DI) aplicado al backend Node.js del proyecto EDI 301, identificando el problema original, justificando el patrón elegido, mostrando el código antes y después de la refactorización, y analizando los beneficios obtenidos.
+</p>
+
+<h2>2. Descripción del Problema de Acoplamiento</h2>
+
+<h3>2.1 Estructura antes de la refactorización</h3>
+<p>
+Antes de aplicar DI, el código seguía un patrón de importación directa en cada capa. Los controladores importaban directamente los casos de uso, y los casos de uso importaban directamente la infraestructura:
+</p>
+
+<p><strong>auth.controller.js (ANTES)</strong></p>
+<pre>
+// El controlador crea su propia dependencia (acoplamiento fuerte)
+const AuthUseCase = require('../../../application/use-cases/auth/auth.usecase');
+
+exports.login = async (req, res) => {
+  const user = await AuthUseCase.login({ login, password });
+};
+</pre>
+
+<p><strong>auth.usecase.js (ANTES)</strong></p>
+<pre>
+// El caso de uso importa infraestructura directamente
+const { sql, queryP } = require('../../../infrastructure/database/db');
+const { comparePassword } = require('../../../shared/utils/hash');
+
+async function login({ login, password }) {
+  const rows = await queryP(Q.byLogin, { Login: { type: sql.NVarChar, value: login } });
+}
+</pre>
+
+<h3>2.2 Problemas identificados</h3>
+
+<table>
+<tr><th>Problema</th><th>Descripción</th></tr>
+<tr><td>Acoplamiento fuerte</td><td>Cada módulo crea o importa directamente sus dependencias.</td></tr>
+<tr><td>Dificultad para pruebas</td><td>No se puede usar mock sin modificar código.</td></tr>
+<tr><td>Violación del DIP</td><td>Dependencia de implementaciones concretas.</td></tr>
+<tr><td>Baja cohesión</td><td>Mezcla lógica con creación de dependencias.</td></tr>
+</table>
+
+<h2>3. Solución Aplicada — Inyección de Dependencias</h2>
+
+<h3>3.1 Patrón elegido</h3>
+<p>
+Constructor Injection + Contenedor Manual sin frameworks externos.
+</p>
+
+<h3>3.2 Contenedor DI</h3>
+<pre>
+class Container {
+  constructor() {
+    this._factories  = new Map();
+    this._singletons = new Map();
+  }
+
+  register(name, factory, singleton = true) {
+    this._factories.set(name, { factory, singleton });
+    return this;
+  }
+
+  resolve(name) {
+    const { factory, singleton } = this._factories.get(name);
+    if (singleton) {
+      if (!this._singletons.has(name)) {
+        this._singletons.set(name, factory(this));
+      }
+      return this._singletons.get(name);
+    }
+    return factory(this);
+  }
+
+  get(name) { return this.resolve(name); }
+}
+</pre>
+
+<h3>3.3 Bootstrap</h3>
+<pre>
+const container = require('./container');
+
+container.register('db', () => require('./database/db'));
+
+container.register('authUseCase', (c) =>
+  new AuthUseCase(c.get('db'))
+);
+
+container.register('authController', (c) =>
+  new AuthController(c.get('authUseCase'))
+);
+</pre>
+
+<h2>4. Código Refactorizado</h2>
+
+<h3>ANTES</h3>
+<pre>
+const { sql, queryP } = require('...db');
+</pre>
+
+<h3>DESPUÉS</h3>
+<pre>
+class AuthUseCase {
+  constructor(db) {
+    this.queryP = db.queryP;
+  }
+}
+</pre>
+
+<h2>5. Análisis de Beneficios</h2>
+
+<table>
+<tr><th>Beneficio</th><th>Descripción</th></tr>
+<tr><td>Bajo acoplamiento</td><td>Independencia de implementación.</td></tr>
+<tr><td>Testabilidad</td><td>Permite mocks.</td></tr>
+<tr><td>DIP</td><td>Dependencias invertidas.</td></tr>
+<tr><td>Punto único</td><td>Configuración centralizada.</td></tr>
+<tr><td>Ciclo de vida</td><td>Singleton controlado.</td></tr>
+<tr><td>Extensibilidad</td><td>Escalable.</td></tr>
+</table>
+
+<h2>6. Conclusiones</h2>
+<p>
+La implementación de DI permitió reducir el acoplamiento sin frameworks externos. Constructor Injection fue la mejor opción por simplicidad y control.
+</p>
+
+<h2>7. Referencias</h2>
+<ol>
+<li>Martin, R. C. (2003)</li>
+<li>Fowler, M. (2004)</li>
+<li>Node.js Documentation (2024)</li>
+<li>Express.js (2024)</li>
+<li>Freeman, A. (2020)</li>
+</ol>
+
+</body>
+</html>
